@@ -1,0 +1,187 @@
+const express = require('express');
+const path = require('path');
+const cookieParser = require('cookie-parser');
+const logger = require('morgan');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = rateLimit;
+const helmet = require('helmet');
+const hpp = require('hpp');
+const qs = require('qs');
+const AppError = require('./utils/appError');
+const globalErrorHandler = require('./controllers/errorController');
+const sanitizeRequest = require('./utils/sanitizeRequest');
+require('dotenv').config();
+
+const usersRouter = require('./routes/usersRouter');
+const categoryRoutes = require('./routes/categoryRoutes');
+const productRoutes = require('./routes/productRoutes');
+const orderRoutes = require('./routes/orderRoutes');
+
+const app = express();
+const api = process.env.API_URL
+
+const parseTrustProxy = (value) => {
+    if (value === undefined || value === null || value === '') {
+        return process.env.NODE_ENV === 'production' ? 1 : false;
+    }
+
+    if (typeof value === 'number') {
+        return value;
+    }
+
+    const normalized = String(value).trim().toLowerCase();
+
+    if (['true', 'yes', 'on'].includes(normalized)) {
+        return true;
+    }
+
+    if (['false', 'no', 'off'].includes(normalized)) {
+        return false;
+    }
+
+    if (normalized === 'loopback' || normalized === 'linklocal' || normalized === 'uniquelocal') {
+        return normalized;
+    }
+
+    const numericValue = Number(normalized);
+    if (Number.isInteger(numericValue) && numericValue >= 0) {
+        return numericValue;
+    }
+
+    return value;
+};
+
+const getClientIp = (req) =>
+    req.ip ||
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.socket?.remoteAddress ||
+    'unknown';
+
+const getRateLimitKey = (req) => ipKeyGenerator(getClientIp(req));
+
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
+app.use(helmet());
+
+// Development logging
+if (process.env.NODE_ENV === 'development') {
+    app.use(logger('dev'));
+}
+
+const limiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 400,
+    message: {
+        status: 'fail',
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'تم إرسال عدد كبير من الطلبات. يرجى المحاولة مرة أخرى بعد ساعة.',
+    },
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+    keyGenerator: getRateLimitKey,
+});
+app.use('/api', limiter);
+
+// Body parser, reading data from body into req.body
+app.use(express.json({ limit: '15kb' }));
+app.use(express.urlencoded({ extended: false, limit: '15kb' }));
+
+app.set('query parser', str => qs.parse(str, {
+    allowDots: false,
+    allowPrototypes: false,
+    arrayLimit: 50,
+    depth: 8,
+    parameterLimit: 100,
+    plainObjects: true,
+}));
+
+app.use(sanitizeRequest);
+
+// Prevent parameter pollution
+app.use(
+    hpp({
+        whitelist: [
+            'duration',
+        ]
+    })
+);
+
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+
+const isLocalDevelopmentOrigin = (origin) =>
+    process.env.NODE_ENV !== 'production' &&
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+const isAllowedOrigin = (origin) => {
+    if (!origin) {
+        return true;
+    }
+
+    if (isLocalDevelopmentOrigin(origin)) {
+        return true;
+    }
+
+    return allowedOrigins.some((allowedOrigin) => {
+        if (allowedOrigin === origin) {
+            return true;
+        }
+
+        if (!allowedOrigin.includes('*')) {
+            return false;
+        }
+
+        const pattern = allowedOrigin
+            .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '.*');
+
+        return new RegExp(`^${pattern}$`).test(origin);
+    });
+};
+
+const corsOptions = {
+    origin(origin, callback) {
+        if (isAllowedOrigin(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new AppError('تعذر تنفيذ الطلب من هذا المصدر.', 403, {
+            code: 'ORIGIN_NOT_ALLOWED',
+        }));
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-mode'],
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+
+app.use(cookieParser());
+
+const allowPublicAssetEmbedding = (req, res, next) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    next();
+};
+
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res) => {
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    }
+}));
+app.use('/public', allowPublicAssetEmbedding, express.static(path.join(__dirname, 'public')));
+
+app.use(`${api}/auth`, usersRouter);
+app.use(`${api}/category`, categoryRoutes);
+app.use(`${api}/product`, productRoutes);
+app.use(`${api}/order`, orderRoutes);
+
+app.use(`${api}`, (req, res, next) => {
+    next(new AppError('الخدمة المطلوبة غير موجودة. يرجى تحديث التطبيق أو المحاولة مرة أخرى لاحقاً.', 404, {
+        code: 'ENDPOINT_NOT_FOUND',
+    }));
+});
+
+app.use(globalErrorHandler);
+module.exports = app;
