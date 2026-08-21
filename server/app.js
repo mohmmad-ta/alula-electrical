@@ -19,7 +19,7 @@ const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 
 const app = express();
-const api = process.env.API_URL
+const api = (process.env.API_URL || '/api/v1').replace(/\/+$/, '');
 
 const parseTrustProxy = (value) => {
     if (value === undefined || value === null || value === '') {
@@ -106,56 +106,14 @@ app.use(
     })
 );
 
-const allowedOrigins = (process.env.CORS_ORIGINS || '')
-    .split(',')
-    .map(origin => origin.trim())
-    .filter(Boolean);
-
-const isLocalDevelopmentOrigin = (origin) =>
-    process.env.NODE_ENV !== 'production' &&
-    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-
-const isAllowedOrigin = (origin) => {
-    if (!origin) {
-        return true;
-    }
-
-    if (isLocalDevelopmentOrigin(origin)) {
-        return true;
-    }
-
-    return allowedOrigins.some((allowedOrigin) => {
-        if (allowedOrigin === origin) {
-            return true;
-        }
-
-        if (!allowedOrigin.includes('*')) {
-            return false;
-        }
-
-        const pattern = allowedOrigin
-            .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-            .replace(/\*/g, '.*');
-
-        return new RegExp(`^${pattern}$`).test(origin);
-    });
-};
-
 const corsOptions = {
-    origin(origin, callback) {
-        if (isAllowedOrigin(origin)) {
-            return callback(null, true);
-        }
-
-        return callback(new AppError('تعذر تنفيذ الطلب من هذا المصدر.', 403, {
-            code: 'ORIGIN_NOT_ALLOWED',
-        }));
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-mode'],
+    origin: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
-    optionsSuccessStatus: 200
+    optionsSuccessStatus: 204,
+    maxAge: 86400,
 };
+app.options('*', cors(corsOptions));
 app.use(cors(corsOptions));
 
 app.use(cookieParser());

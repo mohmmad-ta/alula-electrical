@@ -1,7 +1,9 @@
 import axios from 'axios';
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-const backendUrl = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/$/, '');
+const defaultApiBaseUrl = 'https://api.alulaaldhahabi.com/api/v1';
+const defaultBackendUrl = 'https://api.alulaaldhahabi.com';
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl).replace(/\/$/, '');
+const backendUrl = (import.meta.env.VITE_BACKEND_URL || defaultBackendUrl).replace(/\/$/, '');
 
 const api = axios.create({
   baseURL: apiBaseUrl,

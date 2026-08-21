@@ -10,12 +10,12 @@ const http = require('http');
 const mongoose = require("mongoose");
 const ensureAdminAccount = require('../utils/ensureAdminAccount');
 const { startOrderExpiryJob } = require('../utils/orderExpiry');
+const { getMongoConnectionConfig, mongoStartupMessage } = require('../utils/mongoConfig');
 /**
  * Get port from environment and store in Express.
  */
 
 const port = normalizePort(process.env.PORT || '3000');
-const DB = process.env.MONGOOSE_URL;
 app.set('port', port);
 
 mongoose.set('strictQuery', true);
@@ -35,7 +35,8 @@ server.on('listening', onListening);
 
 const startServer = async () => {
   try {
-    await mongoose.connect(DB);
+    const { uri, options } = getMongoConnectionConfig();
+    await mongoose.connect(uri, options);
     console.log('Connected to MongoDB database.');
 
     await ensureAdminAccount();
@@ -45,7 +46,8 @@ const startServer = async () => {
       console.log(`App running on http://localhost:${port}`);
     });
   } catch (error) {
-    console.error('Backend startup failed:', error);
+    console.error(`Backend startup failed: ${mongoStartupMessage(error)}`);
+    if (process.env.NODE_ENV !== 'production') console.error(error);
     process.exit(1);
   }
 };
